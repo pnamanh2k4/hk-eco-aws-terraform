@@ -1,0 +1,60 @@
+  name: Build and Push Docker Image
+  on:
+    push:
+      branches:
+        - main
+        - develop
+    pull_request:
+      branches:
+        - main
+        - develop
+    workflow_dispatch:
+      inputs:
+        version:
+          description: 'Version tag to build'
+          required: true
+          type: string
+    workflow_call:
+      inputs:
+        version:
+          description: 'Version tag to build'
+          required: true
+          type: string
+          default: 'latest'
+
+  env:
+    AWS_REGION: ap-southeast-1
+    ECR_REGISTRY: 541692464957.dkr.ecr.ap-southeast-1.amazonaws.com
+    ECR_REPOSITORY: hk-eco-web-app
+
+  jobs:
+    build-and-push:
+      runs-on: ubuntu-latest
+
+      steps:
+        - name: Checkout code 
+          uses: actions/checkout@v4
+          with:
+            ref: refs/tags/${{ inputs.version }}
+
+        - name: Configure AWS credentials
+          uses: aws-actions/configure-aws-credentials@v4
+          with:
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: ${{ env.AWS_REGION }}
+            mask-aws-account-id: false
+
+        - name: Login to Amazon ECR
+          id: login-ecr
+          uses: aws-actions/amazon-ecr-login@v2
+
+        - name: Build and Push to ECR
+          run: |
+            docker build -t hk-eco-web-app:${{ inputs.version }} .
+            docker tag hk-eco-web-app:${{ inputs.version }} ${{env.ECR_REGISTRY}}/${{env.ECR_REPOSITORY}}:${{ inputs.version }}
+            docker push ${{env.ECR_REGISTRY}}/${{env.ECR_REPOSITORY}}:${{ inputs.version }}
+
+        - name: Output image URI
+          run: |
+            echo "Image URI=${{env.ECR_REGISTRY}}/${{env.ECR_REPOSITORY}}:${{ inputs.version }}"  >>$GITHUB_OUTPUT
