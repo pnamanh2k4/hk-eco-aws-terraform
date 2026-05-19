@@ -65,23 +65,12 @@
       if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
       steps:
-        - name: Prepare SSH key file
-          env:
-            EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          run: |
-            KEY_FILE="${RUNNER_TEMP}/ec2_key"
-            printf '%s\n' "$EC2_SSH_KEY" > "$KEY_FILE"
-            sed -i 's/\r$//' "$KEY_FILE"
-            chmod 600 "$KEY_FILE"
-            echo "key_file=$KEY_FILE" >> "$GITHUB_OUTPUT"
-          id: ssh-key
-
         - name: Deploy to AWS EC2 via SSH
-          uses: appleboy/ssh-action@v1.0.3
+          uses: appleboy/ssh-action@v1.2.0
           with:
             host: ${{ secrets.EC2_PUBLIC_IP }}
             username: ec2-user
-            key_path: ${{ steps.ssh-key.outputs.key_file }}
+            key: ${{ secrets.EC2_SSH_KEY }}
             port: 22
             script: |
               VERSION="${{ inputs.version }}"
