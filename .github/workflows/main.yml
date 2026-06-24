@@ -1,21 +1,31 @@
 name: Build and Push Docker Image
 
+# develop: push tag v1.0.x-dev  → tự chạy build + deploy (test)
+# main:    push tag v1.0.x       → tự chạy build + deploy (release)
+# push branch (không tag)         → không chạy
+
 on:
   push:
     tags:
-      - "v*"
+      - "v*-dev"
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
-      branch:
-        description: "Branch to build from"
+      mode:
+        description: "Chế độ chạy"
         required: true
-        default: develop
+        default: build_and_deploy
         type: choice
         options:
-          - develop
-          - main
+          - build_and_deploy
+          - deploy_existing
+      ref_name:
+        description: "Branch hoặc tag để checkout khi build (vd. develop, main, v1.0.😎"
+        required: true
+        default: develop
+        type: string
       version:
-        description: "Docker image tag to use"
+        description: "Docker image tag sẽ deploy (vd. v1.0.8-dev hoặc v1.0.😎"
         required: true
         type: string
 
@@ -24,10 +34,11 @@ env:
   ECR_REGISTRY: 541692464957.dkr.ecr.ap-southeast-1.amazonaws.com
   ECR_REPOSITORY: hk-eco-web-app
   IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
-  CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+  CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref_name || github.ref }}
 
 jobs:
   build-and-push:
+    if: ${{ github.event_name == 'push' || inputs.mode == 'build_and_deploy' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -56,13 +67,14 @@ jobs:
 
       - name: Output image URI
         run: |
-          echo "Branch/ref: ${{ env.CHECKOUT_REF }}"
+          echo "Ref: ${{ env.CHECKOUT_REF }}"
           echo "Image tag: ${{ env.IMAGE_TAG }}"
           echo "Image URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
 
   deploy-to-ec2:
     runs-on: ubuntu-latest
     needs: build-and-push
+    if: ${{ always() && (github.event_name == 'push' || inputs.mode == 'deploy_existing' || needs.build-and-push.result == 'success') }}
 
     steps:
       - name: Deploy to AWS EC2 via SSH
