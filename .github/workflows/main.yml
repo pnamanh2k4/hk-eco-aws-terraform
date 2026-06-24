@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Chế độ chạy"
+        description: "Mode:"
         required: true
         default: build_and_deploy
         type: choice
@@ -20,12 +20,12 @@ on:
           - build_and_deploy
           - deploy_existing
       ref_name:
-        description: "Branch hoặc tag để checkout khi build (vd. develop, main, v1.0.😎"
+        description: "ref_name:"
         required: true
         default: develop
         type: string
       version:
-        description: "Docker image tag sẽ deploy (vd. v1.0.8-dev hoặc v1.0.😎"
+        description: "version:"
         required: true
         type: string
 
