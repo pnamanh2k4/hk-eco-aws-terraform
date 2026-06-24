@@ -1,0 +1,113 @@
+  name: Build and Push Docker Image
+  on:
+    push:
+      branches:
+        - main
+        - develop
+    pull_request:
+      branches:
+        - main
+        - develop
+    workflow_dispatch:
+      inputs:
+        version:
+          description: 'Version tag to build'
+          required: true
+          type: string
+    workflow_call:
+      inputs:
+        version:
+          description: 'Version tag to build'
+          required: true
+          type: string
+          default: 'latest'
+
+  env:
+    AWS_REGION: ap-southeast-1
+    ECR_REGISTRY: 541692464957.dkr.ecr.ap-southeast-1.amazonaws.com
+    ECR_REPOSITORY: hk-eco-web-app
+
+  jobs:
+    build-and-push:
+      runs-on: ubuntu-latest
+
+      steps:
+        - name: Checkout code 
+          uses: actions/checkout@v4
+          with:
+            ref: refs/tags/${{ inputs.version }}
+
+        - name: Configure AWS credentials
+          uses: aws-actions/configure-aws-credentials@v4
+          with:
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: ${{ env.AWS_REGION }}
+            mask-aws-account-id: false
+
+        - name: Login to Amazon ECR
+          id: login-ecr
+          uses: aws-actions/amazon-ecr-login@v2
+
+        - name: Build and Push to ECR
+          run: |
+            docker build -t hk-eco-web-app:${{ inputs.version }} .
+            docker tag hk-eco-web-app:${{ inputs.version }} ${{env.ECR_REGISTRY}}/${{env.ECR_REPOSITORY}}:${{ inputs.version }}
+            docker push ${{env.ECR_REGISTRY}}/${{env.ECR_REPOSITORY}}:${{ inputs.version }}
+
+        - name: Output image URI
+          run: |
+            echo "Image URI=${{env.ECR_REGISTRY}}/${{env.ECR_REPOSITORY}}:${{ inputs.version }}"  >>$GITHUB_OUTPUT
+        
+    deploy-to-ec2:
+      runs-on: ubuntu-latest
+      needs: build-and-push
+      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+      steps:
+        - name: Deploy to AWS EC2 via SSH
+          uses: appleboy/ssh-action@v1.2.0
+          with:
+            host: ${{ secrets.EC2_PUBLIC_IP }}
+            username: ec2-user
+            key: ${{ secrets.EC2_SSH_KEY }}
+            port: 22
+            script_stop: true
+            script: |
+              set -euo pipefail
+
+              VERSION="${{ inputs.version }}"
+              if [ -z "$VERSION" ]; then
+                VERSION="latest"
+              fi
+
+              IMAGE="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${VERSION}"
+              echo "Deploying $IMAGE"
+
+              if ! command -v docker >/dev/null 2>&1; then
+                sudo dnf install -y docker
+                sudo systemctl enable --now docker
+              fi
+
+              if ! command -v aws >/dev/null 2>&1; then
+                sudo dnf install -y aws-cli
+              fi
+
+              # Use EC2 instance profile (Terraform: AmazonEC2ContainerRegistryReadOnly)
+              unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+              export AWS_DEFAULT_REGION="${{ env.AWS_REGION }}"
+
+              aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
+                | sudo docker login --username AWS --password-stdin "${{ env.ECR_REGISTRY }}"
+
+              if sudo docker ps -a -q -f name=hk-eco-app | grep -q .; then
+                sudo docker stop hk-eco-app || true
+                sudo docker rm hk-eco-app || true
+              fi
+
+              sudo docker pull "$IMAGE"
+              sudo docker run -d -p 80:80 --name hk-eco-app --restart unless-stopped "$IMAGE"
+
+              sudo docker ps --filter name=hk-eco-app
+              curl -fsS http://127.0.0.1/ >/dev/null
+              echo "Deploy OK: http://${{ secrets.EC2_PUBLIC_IP }}/"
